@@ -159,12 +159,20 @@ class sc2Bot(sc2.BotAI):
 		 		if not err:
 		 			self.mboost_started = True
 
+	async def group_units(self):
+		lings = self.units(ZERGLING)
+		rally = self.state.units.center
+		for unit in lings:
+			await self.do(unit.move(rally))
+
 	async def send_zerglings(self):
-		if len(self.units(ZERGLING)) > 40:
-			for unit in self.units(ZERGLING):
+		lings = self.units(ZERGLING)
+		await self.group_units()
+		if len(lings) > 40:
+			for unit in lings:
 				await self.do(unit.attack(self.select_target()))
 
 run_game(maps.get("(2)LostandFoundLE"), [
 	Bot(Race.Zerg, sc2Bot()),
-	Computer(Race.Protoss, Difficulty.Medium)
-	], realtime=True)
+	Computer(Race.Protoss, Difficulty.Hard)
+	], realtime=False)
