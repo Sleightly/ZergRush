@@ -1,6 +1,7 @@
 import sc2
 import random
 from sc2 import run_game, maps, Race, Difficulty
+from sc2.helpers.control_group import *
 from sc2.player import Bot, Computer
 from sc2.constants import *
 
@@ -26,6 +27,21 @@ class sc2Bot(sc2.BotAI):
 		if self.known_enemy_structures.exists:
 			return random.choice(self.known_enemy_structures).position
 		return self.enemy_start_locations[0]
+
+	def on_end():
+		self.print_score()
+
+	def print_score(self):
+		sd = self.state.score
+		score_values = []
+		score_values.append(sd.collected_minerals)
+		score_values.append(sd.collected_vespene)
+		score_values.append(sd.total_value_units)
+		score_values.append(sd.total_value_structures)
+		score_values.append(sd.killed_value_units)
+		score_values.append(sd.killed_value_structures)
+
+		print(score_values)
 
 	async def make_choice(self):
 		game_time = self.state.game_loop * 0.725 * (1/16)
@@ -114,6 +130,7 @@ class sc2Bot(sc2.BotAI):
 		 	abilities = await self.get_available_abilities(queen)
 		 	if AbilityId.EFFECT_INJECTLARVA in abilities:
 		 		await self.do(queen(EFFECT_INJECTLARVA, self.townhalls[0]))
+		 		return
 
 	async def expand(self):
 		game_time = (self.state.game_loop * 0.725*(1/16) / 60 / 4) + 2#in every 4 minutes
