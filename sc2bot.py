@@ -19,9 +19,11 @@ class sc2Bot(sc2.BotAI):
 		await self.get_vespene()
 		await self.hatch_more_overlords()
 		await self.build_sp()
+		await self.build_bn()
 		await self.construct_queen()
 		await self.inject_larva()
 		await self.get_zergling_speed()
+
 
 	def select_target(self):
 		if self.known_enemy_structures.exists:
@@ -49,24 +51,36 @@ class sc2Bot(sc2.BotAI):
 			await self.hatch_more_drones()
 			return
 
+		if game_time >= 210:
+			await self.build_lair()
 
-		choice = random.randrange(0, 4)
+		if game_time >= 270:
+			await self.build_hd()
+
+
+		choice = random.randrange(0, 5)
 		if len(self.units(DRONE)) >= 75:
 			if choice % 2 == 0:
 				await self.construct_zerglings()
 				return
 			else:
-				await self.send_zerglings()
+				await self.send_units()
 				return
 
-		if choice % 2 == 0:
+		if choice == 0:
 			await self.hatch_more_drones()
 			return 
 		elif choice == 1:
 			await self.construct_zerglings()
 			return
+		elif choice == 2:
+			await self.construct_banelings()
+			return
+		elif choice == 3:
+			await self.construct_hydralisks()
+			return
 		else:
-			await self.send_zerglings()
+			await self.send_units()
 			return
 
 	async def get_vespene(self):
@@ -136,12 +150,40 @@ class sc2Bot(sc2.BotAI):
 		game_time = (self.state.game_loop * 0.725*(1/16) / 60 / 4) + 2#in every 4 minutes
 		if (game_time > len(self.townhalls) or (self.minerals > 900)) and self.can_afford(HATCHERY):
 			await self.expand_now()
-				
+
+	async def get_zergling_speed(self):
+		if self.vespene >= 100:
+		 	sp = self.units(SPAWNINGPOOL).ready
+		 	if sp.exists and self.minerals >= 100 and not self.mboost_started:
+		 		err = await self.do(sp.first(RESEARCH_ZERGLINGMETABOLICBOOST))
+		 		if not err:
+		 			self.mboost_started = True
+
+
 	async def build_sp(self):
 		if not self.units(SPAWNINGPOOL).exists and not self.already_pending(SPAWNINGPOOL):
 			if self.can_afford(SPAWNINGPOOL):
 				await self.build(SPAWNINGPOOL, near=self.townhalls.first)
-				
+
+	async def build_bn(self):
+		if self.units(SPAWNINGPOOL).ready.exists:
+			if not self.units(BANELINGNEST).exists:
+				if self.can_afford(BANELINGNEST):
+					await self.build(BANELINGNEST, near=self.townhalls.first)
+
+	async def build_hd(self):
+		if self.units(LAIR).ready.exists:
+			if not self.units(HYDRALISKDEN).exists:
+				if self.can_afford(HYDRALISKDEN):
+					await self.build(HYDRALISKDEN, near=self.townhalls.first)
+
+	async def build_lair(self):
+		if self.units(SPAWNINGPOOL).ready.exists:
+			if not self.units(LAIR).exists and self.townhalls.first.noqueue:
+				if self.can_afford(LAIR):
+					await self.do(self.townhalls.first.build(LAIR))
+
+
 	async def construct_zerglings(self):
 		game_time = self.state.game_loop * 0.725*(1/16)
 		if game_time >= 120:
@@ -151,28 +193,40 @@ class sc2Bot(sc2.BotAI):
 					await self.do(larvae.random.train(ZERGLING))
 					return
 
-	async def get_zergling_speed(self):
-		 if self.vespene >= 100:
-		 	sp = self.units(SPAWNINGPOOL).ready
-		 	if sp.exists and self.minerals >= 100 and not self.mboost_started:
-		 		err = await self.do(sp.first(RESEARCH_ZERGLINGMETABOLICBOOST))
-		 		if not err:
-		 			self.mboost_started = True
+	async def construct_banelings(self):
+		game_time = self.state.game_loop * 0.725*(1/16)
+		if game_time >= 120:
+			lings = self.units(ZERGLING)
+			if lings.exists and lings.amount > self.units(BANELING).amount:
+				if self.can_afford(BANELING):
+					await self.do(lings.random.train(BANELING))
+			else:
+				await self.construct_zerglings()
+				return
 
-	async def group_units(self):
-		lings = self.units(ZERGLING)
-		rally = self.state.units.center
-		for unit in lings:
-			await self.do(unit.move(rally))
+	async def construct_hydralisks(self):
+		game_time = self.state.game_loop * 0.725*(1/16)
+		if game_time >= 300:
+			larvae = self.units(LARVA)
+			if larvae.exists: 
+				if self.can_afford(HYDRALISK) and self.supply_left > 4:
+					await self.do(larvae.random.train(HYDRALISK))
+					return
 
-	async def send_zerglings(self):
+	async def send_units(self):
 		lings = self.units(ZERGLING)
-		await self.group_units()
-		if len(lings) > 40:
+		banes = self.units(BANELING)
+		hydras = self.units(HYDRALISK)
+		if (len(lings) > 40 or len(banes) > 10) or len(hydras) > 10:
 			for unit in lings:
 				await self.do(unit.attack(self.select_target()))
+			for unit in banes:
+				await self.do(unit.attack(self.select_target()))
+			for unit in hydras:
+				await self.do(unit.attack(self.select_target()))
+
 
 run_game(maps.get("(2)LostandFoundLE"), [
 	Bot(Race.Zerg, sc2Bot()),
 	Computer(Race.Protoss, Difficulty.Hard)
-	], realtime=False)
+	], realtime=True)
