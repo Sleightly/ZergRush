@@ -10,7 +10,9 @@ class sc2Bot(sc2.BotAI):
 		self.first_gas = False
 		self.thirty_gas = False
 		self.mboost_started = False
+		self.chooks_started = False
 		self.extractor_count = 0
+		self.building_lair = False
 
 	async def on_step(self, iteration):
 		await self.distribute_workers()
@@ -23,6 +25,7 @@ class sc2Bot(sc2.BotAI):
 		await self.construct_queen()
 		await self.inject_larva()
 		await self.get_zergling_speed()
+		await self.get_baneling_speed()
 
 
 	def select_target(self):
@@ -58,7 +61,7 @@ class sc2Bot(sc2.BotAI):
 			await self.build_hd()
 
 
-		choice = random.randrange(0, 5)
+		choice = random.randrange(0, 6)
 		if len(self.units(DRONE)) >= 75:
 			if choice % 2 == 0:
 				await self.construct_zerglings()
@@ -76,11 +79,11 @@ class sc2Bot(sc2.BotAI):
 		elif choice == 2:
 			await self.construct_banelings()
 			return
-		elif choice == 3:
-			await self.construct_hydralisks()
+		elif choice == 4:
+			await self.send_units()
 			return
 		else:
-			await self.send_units()
+			await self.construct_hydralisks()
 			return
 
 	async def get_vespene(self):
@@ -127,7 +130,7 @@ class sc2Bot(sc2.BotAI):
 
 	async def construct_queen(self):
 		if self.units(SPAWNINGPOOL).ready.exists:
-			if len(self.units(QUEEN)) <  len(self.townhalls) + 2: 
+			if len(self.units(QUEEN)) <  len(self.townhalls): 
 				num_queens = len(self.units(QUEEN))
 				num_hatches = len(self.townhalls)
 				for i in range(len(self.townhalls)):
@@ -140,11 +143,30 @@ class sc2Bot(sc2.BotAI):
 							num_queens = num_queens + 1
 
 	async def inject_larva(self):
-		for queen in self.units(QUEEN).idle:
-		 	abilities = await self.get_available_abilities(queen)
-		 	if AbilityId.EFFECT_INJECTLARVA in abilities:
-		 		await self.do(queen(EFFECT_INJECTLARVA, self.townhalls[0]))
-		 		return
+		if len(self.units(QUEEN)) > 0:
+			queen = self.units(QUEEN).random
+			if queen.energy >= 25:
+				closest_base = self.townhalls.closest_to(queen.position)
+				if closest_base.has_buff(QUEENSPAWNLARVATIMER):
+					#find next closest base
+					set_base = False
+					for base in self.townhalls:
+						if not base.has_buff(QUEENSPAWNLARVATIMER):
+							closest_base = base
+							set_base = True
+							break	
+
+					if set_base:
+						await self.do(queen(EFFECT_INJECTLARVA, closest_base))
+						return
+					else:
+						print("add creep tumor here")
+						return
+				else:
+					await self.do(queen(EFFECT_INJECTLARVA, closest_base))
+					return
+				return
+		
 
 	async def expand(self):
 		game_time = (self.state.game_loop * 0.725*(1/16) / 60 / 4) + 2#in every 4 minutes
@@ -152,13 +174,20 @@ class sc2Bot(sc2.BotAI):
 			await self.expand_now()
 
 	async def get_zergling_speed(self):
-		if self.vespene >= 100:
+		if self.vespene >= 100 and self.minerals >= 100:
 		 	sp = self.units(SPAWNINGPOOL).ready
 		 	if sp.exists and self.minerals >= 100 and not self.mboost_started:
 		 		err = await self.do(sp.first(RESEARCH_ZERGLINGMETABOLICBOOST))
 		 		if not err:
 		 			self.mboost_started = True
 
+	async def get_baneling_speed(self):
+		if self.vespene >= 150:
+		 	bn = self.units(BANELINGNEST).ready
+		 	if bn.exists and self.minerals >= 150 and not self.chooks_started:
+		 		err = await self.do(bn.first(RESEARCH_CENTRIFUGALHOOKS))
+		 		if not err:
+		 			self.chooks_started = True
 
 	async def build_sp(self):
 		if not self.units(SPAWNINGPOOL).exists and not self.already_pending(SPAWNINGPOOL):
@@ -179,9 +208,11 @@ class sc2Bot(sc2.BotAI):
 
 	async def build_lair(self):
 		if self.units(SPAWNINGPOOL).ready.exists:
-			if not self.units(LAIR).exists and self.townhalls.first.noqueue:
+			if not self.units(LAIR).exists and self.townhalls.first.noqueue and not self.building_lair:
 				if self.can_afford(LAIR):
-					await self.do(self.townhalls.first.build(LAIR))
+					err = await self.do(self.townhalls.first.build(LAIR))
+					if not err:
+						self.building_lair = True
 
 
 	async def construct_zerglings(self):
@@ -197,7 +228,7 @@ class sc2Bot(sc2.BotAI):
 		game_time = self.state.game_loop * 0.725*(1/16)
 		if game_time >= 120:
 			lings = self.units(ZERGLING)
-			if lings.exists and lings.amount > self.units(BANELING).amount:
+			if lings.exists and lings.amount > self.units(BANELING).amount and self.supply_left > 4:
 				if self.can_afford(BANELING):
 					await self.do(lings.random.train(BANELING))
 			else:
