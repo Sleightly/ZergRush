@@ -1,11 +1,12 @@
 import sc2
 import random
-from sc2 import run_game, maps, Race, Difficulty
+from sc2 import run_game, maps, Race, Difficulty, Result
 from sc2.helpers.control_group import *
 from sc2.player import Bot, Computer
 from sc2.constants import *
 import cv2
 import numpy as np
+import time
 
 class sc2Bot(sc2.BotAI):
 	def __init__(self):
@@ -15,11 +16,23 @@ class sc2Bot(sc2.BotAI):
 		self.chooks_started = False
 		self.extractor_count = 0
 		self.building_lair = False
+		self.do_something_after = 0
+		self.train_data = []
 
+	def on_end(self, game_result):
+		print('--- on_end called ---')
+		self.print_score()
+
+		if len(self.townhalls) > 0:
+			print("saving")
+			np.save("E:/TrainingData/train_data_{}.npy".format(str(int(time.time()))), np.array(self.train_data))
+		
 	async def on_step(self, iteration):
+		self.iteration = iteration
 		await self.intel()
 		await self.distribute_workers()
-		await self.make_choice()
+		await self.build_choice()
+		await self.attack_choice()
 		await self.expand()
 		await self.get_vespene()
 		await self.hatch_more_overlords()
@@ -29,7 +42,6 @@ class sc2Bot(sc2.BotAI):
 		await self.inject_larva()
 		await self.get_zergling_speed()
 		await self.get_baneling_speed()
-		self.print_score()
 
 
 	def select_target(self):
@@ -48,7 +60,38 @@ class sc2Bot(sc2.BotAI):
 		score_values.append(sd.killed_value_structures)
 		print(score_values)
 
-	async def make_choice(self):
+	async def attack_choice(self):
+		army_units = [ZERGLING, BANELING, HYDRALISK]
+		game_time = self.state.game_loop * 0.725 * (1/16)
+
+		if game_time > self.do_something_after:
+			choice = random.randrange(0, 4)
+			for UNIT in army_units:
+				for s in self.units(UNIT).idle:
+					#attack toward enemy base
+					if choice == 0:
+						await self.do(s.attack(self.select_target()))
+
+					#attack toward some unit
+					elif choice == 1:
+						if len(self.known_enemy_units) > 0:
+							enemy_unit = random.choice(self.known_enemy_units)
+							if not enemy_unit.is_structure:
+								await self.do(s.attack(enemy_unit))
+
+					elif choice == 2:
+						wait = random.randrange(20, 165)
+						self.do_something_after = game_time + wait
+				
+					#rally at most outward expansion
+					else:
+						await self.do(s.move(self.townhalls.random.position))
+			y = np.zeros(4)
+			y[choice] = 1
+			self.train_data.append([y,self.flipped])
+
+
+	async def build_choice(self):
 		game_time = self.state.game_loop * 0.725 * (1/16)
 		if game_time <= 90:
 			await self.hatch_more_drones()
@@ -62,7 +105,7 @@ class sc2Bot(sc2.BotAI):
 			await self.build_hd()
 
 		choice = random.randrange(0, 6)
-		if len(self.units(DRONE)) >= 75:
+		if len(self.units(DRONE)) >= 65:
 			if choice % 2 == 0:
 				await self.construct_zerglings()
 				return
@@ -78,9 +121,6 @@ class sc2Bot(sc2.BotAI):
 			return
 		elif choice == 2:
 			await self.construct_banelings()
-			return
-		elif choice == 4:
-			await self.send_units()
 			return
 		else:
 			await self.construct_hydralisks()
@@ -124,9 +164,10 @@ class sc2Bot(sc2.BotAI):
 	async def hatch_more_overlords(self):
 		larvae = self.units(LARVA)
 		if larvae.exists: 
-			if self.can_afford(OVERLORD) and not self.already_pending(OVERLORD) and self.supply_left < 3:
-				await self.do(larvae.random.train(OVERLORD))
-				return
+			number_overlords = len(larvae) / 3;
+			for i in range(int(number_overlords)):
+				if self.can_afford(OVERLORD) and not self.already_pending(OVERLORD):
+					await self.do(larvae.random.train(OVERLORD))
 
 	async def construct_queen(self):
 		if self.units(SPAWNINGPOOL).ready.exists:
@@ -263,9 +304,10 @@ class sc2Bot(sc2.BotAI):
 	async def intel(self):
 		size_chart = {
 			HATCHERY: [15, (255, 255, 255)],
+			LAIR: [15, (255, 255, 255)],
 			OVERLORD: [3, (20, 235, 0)],
-			DRONE: [1, (55, 200, 0)],
-			EXTRACTOR: [2, (55, 200, 0)],
+			DRONE: [1, (255, 255, 255)],
+			EXTRACTOR: [2, (255, 255, 255)],
 			SPAWNINGPOOL: [5, (200, 100, 0)],
 			BANELINGNEST: [5, (150, 150, 0)],
 			HYDRALISKDEN: [5, (255, 0, 0)],
@@ -282,8 +324,25 @@ class sc2Bot(sc2.BotAI):
 				pos = unit.position
 				cv2.circle(game_data, (int(pos[0]), int(pos[1])), size_chart[unit_type][0], size_chart[unit_type][1], 1)
 
-		flipped = cv2.flip(game_data, 0)
-		resized = cv2.resize(flipped, dsize=None, fx=2, fy=2)
+		main_base_names = ["nexus", "commandcenter", "hatchery"]
+		for enemy_building in self.known_enemy_structures:
+			pos = enemy_building.position
+			if enemy_building.name.lower() not in main_base_names:
+				cv2.circle(game_data, (int(pos[0]), int(pos[1])), 5, (0, 0, 255), 1)
+			else:
+				cv2.circle(game_data, (int(pos[0]), int(pos[1])), 15, (0, 0, 255), 1)
+
+		for enemy_unit in self.known_enemy_units:
+			if not enemy_unit.is_structure:
+				worker_names = ["probe","scv","drone"]
+				pos = enemy_unit.position
+				if enemy_unit.name.lower() in worker_names:
+					cv2.circle(game_data, (int(pos[0]), int(pos[1])), 1, (0, 0, 255), 1)
+				else:
+					cv2.circle(game_data, (int(pos[0]), int(pos[1])), 3, (0, 0, 255), 1)
+
+		self.flipped = cv2.flip(game_data, 0)
+		resized = cv2.resize(self.flipped, dsize=None, fx=2, fy=2)
 
 		cv2.imshow('Intel', resized)
 		cv2.waitKey(1)
@@ -291,5 +350,5 @@ class sc2Bot(sc2.BotAI):
 
 run_game(maps.get("(2)LostandFoundLE"), [
 	Bot(Race.Zerg, sc2Bot()),
-	Computer(Race.Protoss, Difficulty.Hard)
+	Bot(Race.Zerg, sc2Bot())
 	], realtime=True)
