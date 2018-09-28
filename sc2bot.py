@@ -4,6 +4,7 @@ from sc2 import run_game, maps, Race, Difficulty, Result
 from sc2.helpers.control_group import *
 from sc2.player import Bot, Computer
 from sc2.constants import *
+from sc2.position import Point2
 import cv2
 import numpy as np
 import time
@@ -25,24 +26,7 @@ class sc2Bot(sc2.BotAI):
 
 		if len(self.townhalls) > 0:
 			print("saving")
-			np.save("E:/TrainingData/train_data_{}.npy".format(str(int(time.time()))), np.array(self.train_data))
-		
-	async def on_step(self, iteration):
-		self.iteration = iteration
-		await self.intel()
-		await self.distribute_workers()
-		await self.build_choice()
-		await self.attack_choice()
-		await self.expand()
-		await self.get_vespene()
-		await self.hatch_more_overlords()
-		await self.build_sp()
-		await self.build_bn()
-		await self.construct_queen()
-		await self.inject_larva()
-		await self.get_zergling_speed()
-		await self.get_baneling_speed()
-
+			#np.save("E:/TrainingData/train_data_{}.npy".format(str(int(time.time()))), np.array(self.train_data))
 
 	def select_target(self):
 		if self.known_enemy_structures.exists:
@@ -59,6 +43,85 @@ class sc2Bot(sc2.BotAI):
 		score_values.append(sd.killed_value_units)
 		score_values.append(sd.killed_value_structures)
 		print(score_values)
+		
+	async def on_step(self, iteration):
+		self.iteration = iteration
+		await self.intel()
+		await self.distribute_workers()
+		await self.hatch_more_overlords()
+		await self.build_choice()
+		await self.attack_choice()
+		await self.expand()
+		await self.get_vespene()
+		await self.build_sp()
+		await self.build_bn()
+		await self.construct_queen()
+		await self.inject_larva()
+		await self.get_zergling_speed()
+		await self.get_baneling_speed()
+		await self.calculate_sight()
+
+	async def calculate_sight(self):
+		army_units = [ZERGLING, BANELING, HYDRALISK]
+		enemy_units = {
+			PROBE: [1],
+			SCV: [1],
+			DRONE: [1],
+			ZEALOT: [2],
+			ADEPT: [2],
+			ZERGLING: [2],
+			MARINE: [2],
+			REAPER: [2],
+		}
+		sight = 15
+
+		for unit in army_units:
+			for s in self.units(unit):
+				pos = s.position
+				sight_map = np.zeros((sight, sight))
+
+				adj_x = pos[0] 
+				adj_y = pos[1] 
+
+				if adj_x < 0:
+					adj_x = 0
+				if adj_y < 0:
+					adj_y = 0
+				if adj_x > self.game_info.map_size[0]:
+					adj_x = self.game_info.map_size[0] - 16
+				if adj_y > self.game_info.map_size[1]:
+					adj_y = self.game_info.map_size[1] - 16
+
+				enemy_found = False
+				for enemy in self.known_enemy_units:
+					enemy_pos = enemy.position
+					if enemy_pos[0] > adj_x and enemy_pos[0] < adj_x + 15 and \
+						enemy_pos[1] > adj_y and enemy_pos[1] < adj_y + 15:
+						point_val = 5
+						for unit_type in enemy_units:
+							if enemy.type_id == unit_type:
+								point_val = int(enemy_units[unit_type][0])
+
+						sight_map[int(enemy_pos[1] - adj_y + 7)][int(enemy_pos[0] - adj_x) + 7] = int(point_val * -1)
+						if not enemy_found:
+							enemy_found = True
+
+				for ally in self.units(unit):
+					ally_pos = ally.position
+					if ally_pos[0] > adj_x and ally_pos[0] < adj_x + 15 and \
+						ally_pos[1] > adj_y and ally_pos[1] < adj_y + 15:
+						point_val = 5
+						for unit_type in enemy_units:
+							if ally.type_id == unit_type:
+								point_val = int(enemy_units[unit_type][0])
+
+						sight_map[int(ally_pos[1] - adj_y) + 7][int(ally_pos[0] - adj_x) + 7] = int(point_val)
+
+				sight_map[7][7] = 3;
+			
+				if enemy_found:
+					print(sight_map)
+
 
 	async def attack_choice(self):
 		army_units = [ZERGLING, BANELING, HYDRALISK]
@@ -162,11 +225,10 @@ class sc2Bot(sc2.BotAI):
 				await self.do(larvae.random.train(DRONE))
 
 	async def hatch_more_overlords(self):
-		larvae = self.units(LARVA)
-		if larvae.exists: 
-			number_overlords = len(larvae) / 3;
-			for i in range(int(number_overlords)):
-				if self.can_afford(OVERLORD) and not self.already_pending(OVERLORD):
+		if self.supply_cap < 200:
+			larvae = self.units(LARVA)
+			if larvae.exists: 
+				if self.can_afford(OVERLORD) and not self.already_pending(OVERLORD) and self.supply_left < 4:
 					await self.do(larvae.random.train(OVERLORD))
 
 	async def construct_queen(self):
@@ -293,9 +355,9 @@ class sc2Bot(sc2.BotAI):
 		banes = self.units(BANELING)
 		hydras = self.units(HYDRALISK)
 		if (len(lings) > 40 or len(banes) > 10) or len(hydras) > 10:
-			for unit in lings:
-				await self.do(unit.attack(self.select_target()))
 			for unit in banes:
+				await self.do(unit.attack(self.select_target()))
+			for unit in lings:
 				await self.do(unit.attack(self.select_target()))
 			for unit in hydras:
 				await self.do(unit.attack(self.select_target()))
@@ -350,5 +412,5 @@ class sc2Bot(sc2.BotAI):
 
 run_game(maps.get("(2)LostandFoundLE"), [
 	Bot(Race.Zerg, sc2Bot()),
-	Bot(Race.Zerg, sc2Bot())
+	Computer(Race.Zerg, Difficulty.Hard)
 	], realtime=True)
